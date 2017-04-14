@@ -1,0 +1,6 @@
+{
+  "aws_secret":"AWS_SECRET",
+  "aws_token":"AWS_TOKEN",
+  "ecs_region": "ECS_REGION",
+  "ecs_cluster_name":"ECS_CLUSTER_NAME"
+}
