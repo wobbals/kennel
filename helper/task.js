@@ -1,12 +1,8 @@
 var validator = require('validator');
 var debug = require('debug')('kennel:task');
-var AWS = require('aws-sdk');
 var config = require('config');
-var ecs = new AWS.ECS({
-  accessKeyId: config.get("aws_token"),
-  secretAccessKey: config.get("aws_secret"),
-  region: config.get('ecs_region')
-});
+var kue = require('kue');
+var queue = kue.createQueue();
 
 module.exports.createTask = function(request) {
   var result = {};
@@ -29,8 +25,8 @@ module.exports.createTask = function(request) {
     entry.value = validator.stripLow(request.environment[key] + '');
     environment.push(entry);
   }
-  
-  var params = 
+
+  var params =
   {
     taskDefinition: taskDefinition,
     cluster: config.get("ecs_cluster_name"),
@@ -46,11 +42,17 @@ module.exports.createTask = function(request) {
     },
     startedBy: 'kennel-ws'
   };
-  // this should get pushed to an async worker - if there are no nodes
-  // available, then it's necessary to spin up new instances or wait.
-  ecs.runTask(params, function(err, data) {
-    if (err) console.log(err, err.stack); // an error occurred
-    else     console.log(data);           // successful response
+
+  var job = queue.create('runTask', params)
+  .removeOnComplete(true)
+  .save((err) => {
+    if (err) {
+      debug(`error queueing runTask: ${errr}`);
+    } else {
+      debug(`job ${job.id} accepted`);
+    }
   });
-  return params;
+
+  result.status = 'accepted';
+  return result;
 }

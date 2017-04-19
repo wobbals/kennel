@@ -5,12 +5,14 @@ var config = require('config');
 var task = require('../helper/task');
 
 router.post('/task', function(req, res, next) {
-  var result = task.createTask(req.body);
+  let result = task.createTask(req.body);
   if (result.error) {
-    res.status(500);
+    res.status(400);
+    res.json(result);
+  } else {
+    res.status(202);
+    res.json(result);
   }
-  
-  res.json(result);
 });
 
 router.get('/task/:id', function(req, res, next) {
