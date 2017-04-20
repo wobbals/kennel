@@ -1,32 +1,36 @@
-var validator = require('validator');
-var debug = require('debug')('kennel:task');
-var config = require('config');
-var kue = require('kue');
-var queue = kue.createQueue();
+const validator = require('validator');
+const debug = require('debug')('kennel:task');
+const config = require('config');
+const kue = require('kue');
+const queue = kue.createQueue();
+const uuidV4 = require('uuid/v4');
+const taskModel = require('../model/taskModel');
 
 module.exports.createTask = function(request) {
-  var result = {};
+  let result = {};
   if (!request.task) {
     return {error: 'missing request parameter: task'};
   }
-  var taskDefinition = validator.stripLow(request.task);
+  let taskDefinition = validator.stripLow(request.task);
   if (!request.container) {
     return {error: 'missing request parameter: container'};
   }
-  var containerName = validator.stripLow(request.container);
+  let containerName = validator.stripLow(request.container);
   if (!request.command) {
     return {error: 'missing request parameter: command'};
   }
-  var command = validator.stripLow(request.command);
-  var environment = [];
+  let command = validator.stripLow(request.command);
+  let environment = [];
   for (let key in request.environment) {
-    var entry = {};
+    let entry = {};
     entry.name = validator.stripLow(key + '');
     entry.value = validator.stripLow(request.environment[key] + '');
     environment.push(entry);
   }
 
-  var params =
+  let taskId = uuidV4();
+  debug(`new task request ${taskId} for ${taskDefinition}`);
+  let ecsParams =
   {
     taskDefinition: taskDefinition,
     cluster: config.get("ecs_cluster_name"),
@@ -40,19 +44,32 @@ module.exports.createTask = function(request) {
         }
       ]
     },
-    startedBy: 'kennel-ws'
+    startedBy: 'kennel-ws',
+  };
+  let jobData = {
+    ecsParams: ecsParams,
+    taskId: taskId
   };
 
-  var job = queue.create('runTask', params)
-  .removeOnComplete(true)
-  .save((err) => {
-    if (err) {
-      debug(`error queueing runTask: ${errr}`);
-    } else {
-      debug(`job ${job.id} accepted`);
-    }
+  return new Promise((resolve, reject) => {
+    let job = queue.create('runTask', jobData)
+    .removeOnComplete(true)
+    .save((err) => {
+      if (err) {
+        debug(`error queueing runTask: ${err}`);
+        result.error = `failed to enqueue task`;
+        reject(result);
+      } else {
+        debug(`job ${job.id} accepted`);
+        result.status = 'accepted';
+        result.taskId = taskId;
+        taskModel.registerActiveTask(taskId);
+        taskModel.setTaskData(taskId, {
+          status: 'queued',
+          kueJobId: job.id
+        });
+        resolve(result);
+      }
+    });
   });
-
-  result.status = 'accepted';
-  return result;
-}
+};

@@ -1,20 +1,14 @@
-var kue = require('kue');
-var queue = kue.createQueue();
-var cluster = require('../helper/cluster');
-var debug = require('debug')('worker:scheduler');
+const kue = require('kue');
+const queue = kue.createQueue();
+const cluster = require('../helper/cluster');
+const debug = require('debug')('worker:scheduler');
+const taskModel = require('../model/taskModel');
 
 queue.process('runTask', function(job, done){
   runTask(job, done);
 });
 
-queue.process('cleanup', function(job, done) {
-  let taskArns = job.data;
-  debug(`cleanup checking in on ${taskArns}`);
-  cluster.cleanupAfterTasks(taskArns);
-  done();
-});
-
-queue.process('', function(job, done) {
+queue.process('clusterResize', function(job, done) {
   cluster.autoResize();
   done();
 });
@@ -23,28 +17,30 @@ debug(`connected to queue redis at ${queue.client.address}`);
 debug(`worker standing by`);
 
 function runTask(job, done) {
-  cluster.canRunTaskImmediately(job.data).then((hasResources) => {
+  let taskId = job.data.taskId;
+  cluster.canRunTaskImmediately(job.data.ecsParams).then((hasResources) => {
     if (!hasResources) {
       debug(`no instances available. launch instance and try again later`);
       // add resources and try again later
       cluster.launchInstance().then(() => {
-        tryAgainLater(job, 120);
+        tryAgainLater(job, 180);
         done();
       }, (err) => {
         debug(`instance launch failure. what do? ${err}`);
       });
     } else {
-      debug(`job ${job.id} can be scheduled immediately. requesting runTask`);
-      cluster.runTask(job.data).then((result) => {
-        let taskArns = [];
-        result.tasks.forEach((task) => {
-          taskArns.push(task.taskArn);
+      debug(`task ${taskId} can be scheduled immediately. requesting runTask`);
+      cluster.runTask(job.data.ecsParams).then((result) => {
+        debug(`runTask succeeded. clean up`);
+        let taskArn = result.tasks[0].taskArn;
+        taskModel.setTaskStatus(taskId, 'running').then(msg => {
+          taskModel.setTaskData(taskId, { taskArn: taskArn })
         });
-        scheduleCleanup(taskArns, 300);
-        scheduleCleanup(taskArns, 3600);
+        debug(`runTask succeeded. clean up complete`);
         done();
       }, (err) => {
         debug(`failed to schedule job ${job.id}`);
+        taskModel.setTaskError(taskId, 'server error: cluster.runTask');
         done(err);
       });
     }
@@ -52,12 +48,14 @@ function runTask(job, done) {
 };
 
 function tryAgainLater(job, seconds) {
+  let taskId = job.data.taskId;
   let deferredJob = queue.create('runTask', job.data)
   .delay(seconds * 1000)
   .priority('high')
   .removeOnComplete(true)
   .save();
-  debug(`Retry job ${job.id} in ${seconds} seconds`);
+  taskModel.setStatus(taskId, 'waitingForCluster');
+  debug(`Retry task ${taskId} in ${seconds} seconds`);
 }
 
 function scheduleCleanup(taskArns, seconds) {
@@ -76,4 +74,16 @@ function resizeAfter(seconds) {
   .save();
 }
 
-cluster.autoResize();
+function daemonMain() {
+  taskModel.getActiveTasks().then(taskIds => {
+    taskIds.forEach(taskId => {
+      debug(`daemon: need to check in on ${taskId}`);
+    });
+    cluster.autoResize();
+  }).catch(err => {
+    debug(`daemon: mistakes were made: ${err}`);
+  });
+}
+
+setInterval(daemonMain, 600000);
+daemonMain();

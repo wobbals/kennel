@@ -3,6 +3,17 @@ var bodyParser = require('body-parser');
 var express = require('express');
 var app = express();
 var api = require('./api/index');
+var config = require('config');
+var kue = require('kue');
+var debug = require('debug')('kennel:app');
+
+// NB this must come after including index.js, which creates and configures
+// the first call to kue.createQueue.
+if (config.get("debug_queue")) {
+  // optional: setup kue monitoring/debugging webapp
+  debug("Kue admin listening on port 3001");
+  kue.app.listen(3001);
+}
 
 app.use(logger('combined'));
 app.use(bodyParser.json());

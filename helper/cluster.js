@@ -197,34 +197,22 @@ var canRunTaskImmediately = function(task) {
 };
 module.exports.canRunTaskImmediately = canRunTaskImmediately;
 
-var cleanupAfterTasks = function(taskIds) {
-  if (taskIds.length < 1) {
-    debug(`cleanupAfterTasks: cannot clean up after zero tasks`);
-    return;
-  } else {
-    debug(`cleanupAfterTasks: will wait on tasks ${taskIds}`);
-  }
-  var params = {
-    tasks: taskIds
-  };
-  // TODO: Is this safe to run more than once at a time?
-  // TODO: check on the tasks before calling the waiter. not even sure if this
-  // waitFor method even works :-(
-  ecs.waitFor('tasksStopped', params, function(err, data) {
-    if (err) {
-      debug(`cleanupAfterTasks: error waiting for tasksStopped: ${err}`);
-    } else {
-      debug(`cleanupAfterTasks.waitFor: tasks ${taskIds} stopped; `+
-        ` request autoResize`);
-      autoResize().then(() => {
-        debug(`autoResize complete`);
-      }, (error) => {
-        debug(`autoReize request failure: ${error}`);
-      });
-    }
+var listTasksRunning = function() {
+  return new Promise((resolve, reject) => {
+    var params = {
+      cluster: config.get('ecs_cluster_name')
+    };
+    ecs.listTasks(params, function(err, data) {
+      if (err) {
+        debug(`listTasksRunning: ${err}`);
+        reject(err);
+      } else {
+        debug(`listTasksRunning: found ${data.taskArns.length} running tasks`);
+        resolve(data);
+      }
+    });
   });
 }
-module.exports.cleanupAfterTasks = cleanupAfterTasks;
 
 var runTask = function(task) {
   return new Promise((resolve, reject) => {
