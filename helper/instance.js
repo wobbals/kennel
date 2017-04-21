@@ -11,6 +11,7 @@ var ec2 = new AWS.EC2({
   secretAccessKey: config.get("aws_secret"),
   region: config.get('ecs_region')
 });
+var Instance = require('../model/instanceModel');
 
 var terminateInstance = function(instanceId) {
   debug(`terminate instance ${instanceId}`);
@@ -59,6 +60,7 @@ var launchClusterInstance = function() {
       } else {
         data.Instances.forEach((anInstance) => {
           debug(`succesfully launched new instance ${anInstance.InstanceId}`);
+          Instance.registerInstance(anInstance.InstanceId);
         });
         resolve(data);
       }

@@ -32,9 +32,12 @@ function runTask(job, done) {
       debug(`task ${taskId} can be scheduled immediately. requesting runTask`);
       cluster.runTask(job.data.ecsParams).then((result) => {
         debug(`runTask succeeded. clean up`);
+        Instance.addTaskIds(taskId);
         let taskArn = result.tasks[0].taskArn;
-        taskModel.setTaskStatus(taskId, 'running').then(msg => {
-          taskModel.setTaskData(taskId, { taskArn: taskArn })
+        taskModel.setTaskArn(task, taskArn)
+        .then(taskModel.setTaskStatus(taskId, 'running'))
+        .catch(err => {
+          debug(`task model updates failed: ${err}`);
         });
         debug(`runTask succeeded. clean up complete`);
         done();

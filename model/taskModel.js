@@ -81,3 +81,18 @@ module.exports.getActiveTasks = function() {
     });
   });
 }
+
+module.exports.setTaskArn = function(taskId, arn) {
+  debug(`setTaskArn: ${taskId}, ${arn}`);
+  return new Promise((resolve, reject) => {
+    redis.HMSET(`task:${taskId}`, {
+      arn: arn
+    }, (err, obj) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(obj);
+      }
+    });
+  });
+}

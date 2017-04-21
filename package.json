@@ -4,7 +4,7 @@
   "description": "job scheduling tool for ECS clusters",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "mocha test/**/**.spec.js"
   },
   "author": "Charley Robinson - charley@tokbox.com",
   "license": "Apache-2.0",
@@ -19,5 +19,10 @@
     "redis": "^2.7.1",
     "uuid": "^3.0.1",
     "validator": "^7.0.0"
+  },
+  "devDependencies": {
+    "chai": "^3.5.0",
+    "chai-as-promised": "^6.0.0",
+    "mocha": "^3.2.0"
   }
 }

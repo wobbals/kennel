@@ -7,6 +7,8 @@ var ecs = new AWS.ECS({
   region: config.get('ecs_region')
 });
 var instanceHelper = require('./instance');
+var Instance = require('../model/instanceModel');
+var Task = require('../model/taskModel');
 
 var getContainerInstances = function() {
   let params = {
@@ -221,9 +223,8 @@ var runTask = function(task) {
         debug(`runTask: failed with ${err}`);
         reject(err);
       } else {
-        data.tasks.forEach((task) => {
-          debug(`runTask: launched ${task.taskArn}`);
-        });
+        let taskArn = data.tasks[0].taskArn;
+        debug(`runTask: launched ${taskArn}`);
         resolve(data);
       }
     });
