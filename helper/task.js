@@ -4,7 +4,33 @@ const config = require('config');
 const kue = require('kue');
 const queue = kue.createQueue();
 const uuidV4 = require('uuid/v4');
+const AWS = require('aws-sdk');
+const ecs = new AWS.ECS({
+  accessKeyId: config.get("aws_token"),
+  secretAccessKey: config.get("aws_secret"),
+  region: config.get('ecs_region')
+});
 const taskModel = require('../model/taskModel');
+
+module.exports.describeTasks = function(taskIds) {
+  debug(`describeTasks ${taskIds}`);
+  if (taskIds.length < 1) {
+    return Promise.resolve({tasks: []});
+  }
+  return new Promise((resolve, reject) => {
+    var params = {
+      tasks: taskIds,
+      cluster: config.get('ecs_cluster_name')
+    };
+    ecs.describeTasks(params, function(err, data) {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(data);
+      }
+    });
+  });
+}
 
 module.exports.createTask = function(request) {
   let result = {};
@@ -51,7 +77,7 @@ module.exports.createTask = function(request) {
     taskId: taskId
   };
 
-  return new Promise((resolve, reject) => {
+  let p = new Promise((resolve, reject) => {
     let job = queue.create('runTask', jobData)
     .removeOnComplete(true)
     .save((err) => {
@@ -63,13 +89,13 @@ module.exports.createTask = function(request) {
         debug(`job ${job.id} accepted`);
         result.status = 'accepted';
         result.taskId = taskId;
-        taskModel.registerActiveTask(taskId);
-        taskModel.setTaskData(taskId, {
-          status: 'queued',
-          kueJobId: job.id
-        });
         resolve(result);
       }
     });
   });
+  return p.then(taskModel.createTask(taskId))
+  .then(taskModel.registerActiveTask(taskId))
+  .then(taskModel.setTaskData(taskId, {
+    status: 'queued'
+  }));
 };

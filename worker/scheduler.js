@@ -3,9 +3,17 @@ const queue = kue.createQueue();
 const cluster = require('../helper/cluster');
 const debug = require('debug')('worker:scheduler');
 const taskModel = require('../model/taskModel');
+const instanceModel = require('../model/instanceModel');
+const taskHelper = require('../helper/task');
 
 queue.process('runTask', function(job, done){
-  runTask(job, done);
+  runTask(job).then(() => {
+    done();
+  })
+  .catch(err => {
+    debug(`runTask processing error: ${err}`);
+    done();
+  });
 });
 
 queue.process('clusterResize', function(job, done) {
@@ -13,51 +21,67 @@ queue.process('clusterResize', function(job, done) {
   done();
 });
 
+queue.on( 'error', err => {
+  debug(err);
+});
+
+process.on('uncaughtException', err => {
+  console.error( 'Something bad happened: ', err );
+  console.error(reason.stack);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, p) => {
+  console.error('unhandled rejection: ' + reason);
+  console.error(reason.stack);
+  process.exit(1);
+});
+
 debug(`connected to queue redis at ${queue.client.address}`);
 debug(`worker standing by`);
 
-function runTask(job, done) {
+function handleNoResources(job) {
+  return cluster.launchInstance()
+  .then(() => {
+    tryAgainLater(job, 180);
+  });
+}
+
+function runTaskImmediately(taskId, ecsParams) {
+  return cluster.runTask(ecsParams)
+  .then(result => {
+    let p1 = taskModel.mergeRunningTaskData(taskId, result);
+    let p2 = cluster.markRunningInstance(result);
+    return Promise.all([p1, p2]);
+  });
+}
+
+function runTask(job) {
   let taskId = job.data.taskId;
-  cluster.canRunTaskImmediately(job.data.ecsParams).then((hasResources) => {
+  return cluster.canRunTaskImmediately(job.data.ecsParams)
+  .then((hasResources) => {
     if (!hasResources) {
       debug(`no instances available. launch instance and try again later`);
-      // add resources and try again later
-      cluster.launchInstance().then(() => {
-        tryAgainLater(job, 180);
-        done();
-      }, (err) => {
-        debug(`instance launch failure. what do? ${err}`);
-      });
+      return handleNoResources(job);
     } else {
-      debug(`task ${taskId} can be scheduled immediately. requesting runTask`);
-      cluster.runTask(job.data.ecsParams).then((result) => {
-        debug(`runTask succeeded. clean up`);
-        Instance.addTaskIds(taskId);
-        let taskArn = result.tasks[0].taskArn;
-        taskModel.setTaskArn(task, taskArn)
-        .then(taskModel.setTaskStatus(taskId, 'running'))
-        .catch(err => {
-          debug(`task model updates failed: ${err}`);
-        });
-        debug(`runTask succeeded. clean up complete`);
-        done();
-      }, (err) => {
-        debug(`failed to schedule job ${job.id}`);
-        taskModel.setTaskError(taskId, 'server error: cluster.runTask');
-        done(err);
-      });
+      debug(`task ${taskId} can be scheduled immediately`);
+      return runTaskImmediately(taskId, job.data.ecsParams);
     }
   });
 };
 
 function tryAgainLater(job, seconds) {
+  debug(`tryAgainLater: ${job.id}, ${seconds}`);
   let taskId = job.data.taskId;
   let deferredJob = queue.create('runTask', job.data)
   .delay(seconds * 1000)
   .priority('high')
   .removeOnComplete(true)
   .save();
-  taskModel.setStatus(taskId, 'waitingForCluster');
+  taskModel.setTaskStatus(taskId, 'waitingForCluster')
+  .catch(err => {
+    debug(err);
+  });
   debug(`Retry task ${taskId} in ${seconds} seconds`);
 }
 
@@ -77,16 +101,75 @@ function resizeAfter(seconds) {
   .save();
 }
 
-function daemonMain() {
-  taskModel.getActiveTasks().then(taskIds => {
-    taskIds.forEach(taskId => {
-      debug(`daemon: need to check in on ${taskId}`);
+function refreshInstanceECSDescriptions() {
+  return cluster.getContainerInstances()
+  .then(cluster.describeContainerInstances)
+  .then(cluster.mergeECSInstanceDescriptions);
+}
+
+function printCachedInstanceData() {
+  return cluster.getContainerInstances()
+  .then(containerInstanceIds => {
+    let promises = [];
+    containerInstanceIds.forEach(id => {
+      debug(`print cached data for ${id}`);
+      promises.push(
+        instanceModel.getInstanceIdForArn(id)
+        .then(instanceModel.getInstance)
+        .then(instance => {
+          debug(instance);
+        })
+      );
     });
-    cluster.autoResize();
-  }).catch(err => {
-    debug(`daemon: mistakes were made: ${err}`);
+    return Promise.all(promises);
+  })
+}
+
+function refreshTaskECSDescriptions() {
+  return taskModel.getActiveTasks()
+  .then(taskIds => {
+    debug('active tasks(redis):');
+    debug(taskIds);
+    let taskGets = [];
+    taskIds.forEach(taskId => {
+      taskGets.push(taskModel.getTask(taskId));
+    });
+    return Promise.all(taskGets);
+    //cluster.autoResize();
+  })
+  .then(tasks => {
+    debug('task details(redis):');
+    debug(tasks);
+    let taskArns = [];
+    tasks.forEach(task => {
+      if (task.arn) {
+        taskArns.push(task.arn);
+      }
+    });
+    return taskHelper.describeTasks(taskArns);
+  })
+  .then(ecsTaskDescriptions => {
+    let promises = [];
+    ecsTaskDescriptions.tasks.forEach(task => {
+      promises.push(taskModel.mergeECSTaskDescription(task));
+    });
+    return Promise.all(promises);
   });
 }
 
-setInterval(daemonMain, 600000);
+function daemonMain() {
+  refreshInstanceECSDescriptions()
+  .then(printCachedInstanceData())
+  .then(refreshTaskECSDescriptions())
+  .then(cluster.autoResize())
+  .catch(err => {
+    debug(`daemon: mistakes were made.`);
+    debug(err);
+    debug(err.stack);
+  });
+}
+
+setInterval(daemonMain, 60000);
 daemonMain();
+// setInterval(daemonMain, 600000 /* 10 minutes */);
+// cluster.autoResize();

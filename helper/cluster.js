@@ -30,6 +30,7 @@ var getContainerInstances = function() {
 module.exports.getContainerInstances = getContainerInstances;
 
 var describeContainerInstances = function(instances) {
+  debug(instances);
   debug(`describeContainerInstances: describe ${instances.length} instances`);
   return new Promise((resolve, reject) => {
     if (instances.length < 1) {
@@ -45,6 +46,7 @@ var describeContainerInstances = function(instances) {
         debug(`describeContainerInstances error`);
         reject(err);
       } else {
+        //debug(data);
         resolve(data);
       }
     });
@@ -102,32 +104,54 @@ var deregisterContainerInstance = function(containerInstanceId) {
 }
 module.exports.deregisterContainerInstance = deregisterContainerInstance;
 
-var autoResize = function() {
-  // TODO: this should take a parameter/config to leave some resources hot
-  debug(`autoResize: evict all taskless instances`);
-  return new Promise((resolve, reject) => {
-    getContainerInstances()
-    .then(describeContainerInstances)
-    .then((instanceDescriptions) => {
-      let promises = [];
-      instanceDescriptions.containerInstances.forEach((description) => {
-        if (0 == description.runningTasksCount &&
-          0 == description.pendingTasksCount)
-        {
-          promises.push(
-            deregisterContainerInstance(description.containerInstanceArn)
-          );
-          promises.push(
-            instanceHelper.terminateInstance(description.ec2InstanceId)
-          );
-        }
-      });
-      Promise.all(terminatePromises).then(() => {
-        resolve();
-      }).catch((err) => {
-        reject(err);
-      });
+var getLocalContainerData = function() {
+  return getContainerInstances()
+  .then(containerIds => {
+    let promises = [];
+    containerIds.forEach(containerId => {
+      promises.push(
+        Instance.getInstanceIdForArn(containerId)
+        .then(Instance.getInstance)
+      );
     });
+    return Promise.all(promises);
+  });
+}
+
+var autoResize = function() {
+  const warmInstances = config.get('warmInstances');
+  const warmIdleTimeout = config.get('warmIdleTimeout');
+  debug(`autoResize: targeting ${warmInstances} warm instances` +
+    ` (timeout=${warmIdleTimeout})`);
+  return getLocalContainerData()
+  .then(containerData => {
+    let now = new Date();
+    let idleInstances = containerData.filter(instance => {
+      if (!instance || !instance.idleSince) {
+        return false;
+      }
+      let idleStart = new Date(parseInt(instance.idleSince));
+      debug(`now=${now} idleStart=${idleStart}`);
+      debug(`instance ${instance.instanceId}: ${now - idleStart} ms idle`);
+      return (now - idleStart) > warmIdleTimeout * 1000;
+    });
+    let idleCount = idleInstances.length;
+    debug(`autoResize: ${idleCount} idle instances: ${idleInstances}`)
+    let promises = [];
+    for (let i = 0; i < idleCount - warmInstances; i++) {
+      if (!idleInstances.length) {
+        debug(`not enough instances to leave ${warmInstances} warm`);
+        break;
+      }
+      let instance = idleInstances.shift();
+      promises.push(
+        deregisterContainerInstance(instance.arn)
+      );
+      promises.push(
+        instanceHelper.terminateInstance(instance.instanceId)
+      );
+    }
+    return Promise.all(promises);
   });
 }
 module.exports.autoResize = autoResize;
@@ -165,36 +189,31 @@ var taskRequiredMemory = function(taskDescription) {
 }
 
 var canRunTaskImmediately = function(task) {
-  return new Promise((resolve, reject) => {
-    let taskDescription = getTaskDescription(task.taskDefinition);
-    let instanceDescriptions =
-    getContainerInstances().then(describeContainerInstances);
-    Promise.all([taskDescription, instanceDescriptions]).then((values) => {
-      // js nerds: is there a better way to map the promise results back from
-      // the original call to Promise.all? Can I rely on the ordering to be
-      // preserved here?
-      let description = values[0];
-      let instances = values[1];
-      let availableInstances = 0;
-      let requiredMemory = taskRequiredMemory(description);
-      let requiredCPU = taskRequiredCPU(description);
-      debug(`task: mem=${requiredMemory} cpu=${requiredCPU}`);
-      instances.containerInstances.forEach((instance) => {
-        let availableMemory = instanceAvailableMemory(instance);
-        let availableCPU = instanceAvailableCPU(instance);
-        debug(`instance ${instance.ec2InstanceId}: ` +
-          `available mem=${availableMemory} cpu=${availableCPU}`
-        );
-        if (availableCPU >= requiredCPU && availableMemory >= requiredMemory) {
-          availableInstances++
-        }
-      });
-      resolve(availableInstances > 0);
-    }).catch(reason => {
-      reject(reason);
-      debug(`canRunTaskImmediately: ${reason}`);
-      debug(reason.stack)
+  let taskDescription = getTaskDescription(task.taskDefinition);
+  let instanceDescriptions =
+  getContainerInstances().then(describeContainerInstances);
+  return Promise.all([taskDescription, instanceDescriptions]).then((values) => {
+    // js nerds: is there a better way to map the promise results back from
+    // the original call to Promise.all? Can I rely on the ordering to be
+    // preserved here?
+    let description = values[0];
+    let instances = values[1];
+    let availableInstances = 0;
+    let requiredMemory = taskRequiredMemory(description);
+    let requiredCPU = taskRequiredCPU(description);
+    debug(`task: mem=${requiredMemory} cpu=${requiredCPU}`);
+    instances.containerInstances.forEach((instance) => {
+      let availableMemory = instanceAvailableMemory(instance);
+      let availableCPU = instanceAvailableCPU(instance);
+      debug(`instance ${instance.ec2InstanceId}: ` +
+        `available mem=${availableMemory} cpu=${availableCPU}`
+      );
+      if (availableCPU >= requiredCPU && availableMemory >= requiredMemory) {
+        availableInstances++
+      }
     });
+    debug(`canRunTaskImmediately: resolving with ${availableInstances > 0}`);
+    return availableInstances > 0;
   });
 };
 module.exports.canRunTaskImmediately = canRunTaskImmediately;
@@ -222,7 +241,11 @@ var runTask = function(task) {
       if (err) {
         debug(`runTask: failed with ${err}`);
         reject(err);
+      } else if (data.failures && data.failures.length > 0) {
+        reject(data.failures);
       } else {
+        debug(`check my syntax:`);
+        debug(data);
         let taskArn = data.tasks[0].taskArn;
         debug(`runTask: launched ${taskArn}`);
         resolve(data);
@@ -232,4 +255,57 @@ var runTask = function(task) {
 };
 module.exports.runTask = runTask;
 
+module.exports.markRunningInstance = function(runTaskResponse) {
+  let promises = [];
+  runTaskResponse.tasks.forEach(task => {
+    promises.push(
+      Instance.getInstanceIdForArn(task.containerInstanceArn)
+      .then(Instance.clearIdleSince)
+    );
+  });
+  return Promise.all(promises);
+}
+
+module.exports.mergeECSInstanceDescriptions = function(ecsDescriptions) {
+  debug('mergeECSInstanceDescriptions');
+  debug(ecsDescriptions);
+  let promises = [];
+  ecsDescriptions.containerInstances.forEach(instanceData => {
+    let instanceId = instanceData.ec2InstanceId;
+    promises.push(
+      Instance.setInstanceArn(instanceId, instanceData.containerInstanceArn)
+    );
+    promises.push(
+      Instance.setInstanceData(
+        instanceId,
+        {
+          instanceId: instanceId,
+          status: instanceData.status,
+          runningTasksCount: instanceData.runningTasksCount,
+          pendingTasksCount: instanceData.pendingTasksCount
+        }
+      )
+    );
+
+    let isPassive = (
+      0 == instanceData.runningTasksCount &&
+      0 == instanceData.pendingTasksCount
+    );
+    let p;
+    if (isPassive) {
+      p = Instance.getIdleSince(instanceId).then(since => {
+        debug(`${instanceId} idle since ${since}`);
+        if (!since) {
+          return Instance.setIdleSince(instanceId, new Date());
+        }
+      });
+    } else {
+      p = Instance.clearIdleSince(instanceId);
+    }
+    promises.push(p);
+  });
+  return Promise.all(promises);
+}
+
 module.exports.launchInstance = instanceHelper.launchClusterInstance;
+
