@@ -1,4 +1,4 @@
-const redis = require('redis').createClient();
+const redis = require('./db');
 const debug = require('debug')('kennel:model:task');
 
 module.exports.getTask = function(taskId) {

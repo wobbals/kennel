@@ -2,5 +2,9 @@
   "aws_secret":"AWS_SECRET",
   "aws_token":"AWS_TOKEN",
   "ecs_region": "ECS_REGION",
-  "ecs_cluster_name":"ECS_CLUSTER_NAME"
+  "ecs_cluster_name":"ECS_CLUSTER_NAME",
+  "ec2_default_security_group": "EC2_DEFAULT_SECURITY_GROUP",
+  "cluster_instance_base_image": "CLUSTER_INSTANCE_BASE_IMAGE",
+  "redis_host": "REDIS_HOST",
+  "redis_port": "REDIS_PORT"
 }

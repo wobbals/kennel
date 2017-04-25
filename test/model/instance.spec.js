@@ -28,7 +28,7 @@ describe('Instance model', () => {
     });
     it('should register an instance', () => {
       return Instance.registerInstance(dummyInstanceId)
-      .should.become(1);
+      .should.become('OK');
     });
     it('should find registered instance', () => {
       return Instance.getInstance(dummyInstanceId)

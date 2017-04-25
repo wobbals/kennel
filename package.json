@@ -2,8 +2,8 @@
   "name": "kennel",
   "version": "0.0.1",
   "description": "job scheduling tool for ECS clusters",
-  "main": "index.js",
   "scripts": {
+    "start": "node ./bin/www",
     "test": "mocha test/**/**.spec.js"
   },
   "author": "Charley Robinson - charley@tokbox.com",

@@ -1,4 +1,4 @@
-const redis = require('redis').createClient();
+const redis = require('./db');
 const debug = require('debug')('kennel:model:instance');
 
 module.exports.registerInstance = function(instanceId) {

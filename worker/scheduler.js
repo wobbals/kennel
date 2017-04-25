@@ -1,5 +1,4 @@
-const kue = require('kue');
-const queue = kue.createQueue();
+const queue = require('../helper.jobQueue');
 const cluster = require('../helper/cluster');
 const debug = require('debug')('worker:scheduler');
 const taskModel = require('../model/taskModel');

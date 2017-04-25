@@ -1,8 +1,7 @@
 const validator = require('validator');
 const debug = require('debug')('kennel:task');
 const config = require('config');
-const kue = require('kue');
-const queue = kue.createQueue();
+const queue = require('./jobQueue');
 const uuidV4 = require('uuid/v4');
 const AWS = require('aws-sdk');
 const ecs = new AWS.ECS({
