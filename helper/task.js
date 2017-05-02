@@ -32,6 +32,7 @@ module.exports.describeTasks = function(taskIds) {
 }
 
 module.exports.createTask = function(request) {
+  let taskId = uuidV4();
   let result = {};
   if (!request.task) {
     return {error: 'missing request parameter: task'};
@@ -45,6 +46,10 @@ module.exports.createTask = function(request) {
     return {error: 'missing request parameter: command'};
   }
   let command = validator.stripLow(request.command);
+  debug(`command passed: ${request.command}`);
+  debug(`command parsed: ${command}`);
+  debug(command);
+  request.environment.TASK_ID = taskId;
   let environment = [];
   for (let key in request.environment) {
     let entry = {};
@@ -53,7 +58,6 @@ module.exports.createTask = function(request) {
     environment.push(entry);
   }
 
-  let taskId = uuidV4();
   debug(`new task request ${taskId} for ${taskDefinition}`);
   let ecsParams =
   {
@@ -72,12 +76,22 @@ module.exports.createTask = function(request) {
     startedBy: 'kennel-ws',
   };
   let jobData = {
-    ecsParams: ecsParams,
-    taskId: taskId
+    ecsParams: JSON.stringify(ecsParams),
+    taskId: taskId,
+    status: 'queued'
   };
 
-  let p = new Promise((resolve, reject) => {
-    let job = queue.create('runTask', jobData)
+  let responseData = {
+    taskId: taskId,
+    status: 'accepted'
+  };
+
+  let p1 = taskModel.createTask(taskId)
+  .then(taskModel.registerActiveTask(taskId))
+  .then(taskModel.setTaskData(taskId, jobData));
+
+  let p2 = new Promise((resolve, reject) => {
+    let job = queue.create('runTask', taskId)
     .removeOnComplete(true)
     .save((err) => {
       if (err) {
@@ -92,9 +106,6 @@ module.exports.createTask = function(request) {
       }
     });
   });
-  return p.then(taskModel.createTask(taskId))
-  .then(taskModel.registerActiveTask(taskId))
-  .then(taskModel.setTaskData(taskId, {
-    status: 'queued'
-  }));
+
+  return Promise.resolve(responseData).then(p1).then(p2);
 };

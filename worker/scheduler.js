@@ -6,7 +6,7 @@ const instanceModel = require('../model/instanceModel');
 const taskHelper = require('../helper/task');
 
 queue.process('runTask', function(job, done){
-  runTask(job).then(() => {
+  runTask(job.data).then(() => {
     done();
   })
   .catch(err => {
@@ -20,30 +20,28 @@ queue.process('clusterResize', function(job, done) {
   done();
 });
 
-queue.on( 'error', err => {
+queue.on('error', err => {
   debug(err);
 });
 
 process.on('uncaughtException', err => {
   console.error( 'Something bad happened: ', err );
-  console.error(reason.stack);
+  console.error(err.stack);
   process.exit(1);
 });
 
 process.on('unhandledRejection', (reason, p) => {
-  console.error('unhandled rejection: ' + reason);
+  console.error('unhandled rejection: ' + JSON.stringify(reason, null, ' '));
+  console.error(p);
   console.error(reason.stack);
-  process.exit(1);
 });
 
 debug(`connected to queue redis at ${queue.client.address}`);
 debug(`worker standing by`);
 
-function handleNoResources(job) {
+function handleNoResources(taskId) {
   return cluster.launchInstance()
-  .then(() => {
-    tryAgainLater(job, 180);
-  });
+  .then(taskModel.setTaskStatus(taskId, 'waitingForCluster'));
 }
 
 function runTaskImmediately(taskId, ecsParams) {
@@ -55,50 +53,25 @@ function runTaskImmediately(taskId, ecsParams) {
   });
 }
 
-function runTask(job) {
-  let taskId = job.data.taskId;
-  return cluster.canRunTaskImmediately(job.data.ecsParams)
+function runTask(taskId) {
+  var taskData = {};
+  var ecsParams = {};
+  return taskModel.getTask(taskId)
+  .then(task => {
+    taskData = task;
+    ecsParams = JSON.parse(task.ecsParams);
+    return cluster.canRunTaskImmediately(ecsParams)
+  })
   .then((hasResources) => {
     if (!hasResources) {
       debug(`no instances available. launch instance and try again later`);
-      return handleNoResources(job);
+      return handleNoResources(taskId);
     } else {
       debug(`task ${taskId} can be scheduled immediately`);
-      return runTaskImmediately(taskId, job.data.ecsParams);
+      return runTaskImmediately(taskId, ecsParams);
     }
   });
 };
-
-function tryAgainLater(job, seconds) {
-  debug(`tryAgainLater: ${job.id}, ${seconds}`);
-  let taskId = job.data.taskId;
-  let deferredJob = queue.create('runTask', job.data)
-  .delay(seconds * 1000)
-  .priority('high')
-  .removeOnComplete(true)
-  .save();
-  taskModel.setTaskStatus(taskId, 'waitingForCluster')
-  .catch(err => {
-    debug(err);
-  });
-  debug(`Retry task ${taskId} in ${seconds} seconds`);
-}
-
-function scheduleCleanup(taskArns, seconds) {
-  debug(`scheduleCleanup: check in on tasks ${taskArns} in ${seconds} seconds`);
-  let deferredJob = queue.create('cleanup', taskArns)
-  .delay(seconds * 1000)
-  .removeOnComplete(true)
-  .save();
-}
-
-function resizeAfter(seconds) {
-  debug(`resizeAfter: request cluster resize in ${seconds} seconds`);
-  let deferredJob = queue.create('clusterResize', {})
-  .delay(seconds * 1000)
-  .removeOnComplete(true)
-  .save();
-}
 
 function refreshInstanceECSDescriptions() {
   return cluster.getContainerInstances()
@@ -125,6 +98,7 @@ function printCachedInstanceData() {
 }
 
 function refreshTaskECSDescriptions() {
+  var tryTasksAgain = [];
   return taskModel.getActiveTasks()
   .then(taskIds => {
     debug('active tasks(redis):');
@@ -134,7 +108,6 @@ function refreshTaskECSDescriptions() {
       taskGets.push(taskModel.getTask(taskId));
     });
     return Promise.all(taskGets);
-    //cluster.autoResize();
   })
   .then(tasks => {
     debug('task details(redis):');
@@ -144,6 +117,18 @@ function refreshTaskECSDescriptions() {
       if (task.arn) {
         taskArns.push(task.arn);
       }
+      if ('waitingForCluster' === task.status) {
+        debug(`task ${task.taskId} needs to run!`);
+        // TODO: This should only fire if an instance has become available.
+        // otherwise, we'll probably end up launching more instances than
+        // needed.
+        tryTasksAgain.push(task.taskId);
+      }
+      if ('queued' === task.status) {
+        debug(`task ${task.taskId} is queued and unprocessed. rerunning.`);
+        // kue job hasn't run yet... why?
+        tryTasksAgain.push(task.taskId);
+      }
     });
     return taskHelper.describeTasks(taskArns);
   })
@@ -152,11 +137,16 @@ function refreshTaskECSDescriptions() {
     ecsTaskDescriptions.tasks.forEach(task => {
       promises.push(taskModel.mergeECSTaskDescription(task));
     });
+    tryTasksAgain.forEach(taskId => {
+      promises.push(runTask(taskId));
+    });
     return Promise.all(promises);
   });
 }
 
 function daemonMain() {
+  // Clean this up: Run all async getters. Once all data is available in
+  // one place, then perform scheduling/terminations/etc as needed.
   refreshInstanceECSDescriptions()
   .then(printCachedInstanceData())
   .then(refreshTaskECSDescriptions())

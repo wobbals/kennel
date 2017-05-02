@@ -8,9 +8,9 @@ services:
 script:
 - docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit
 
-after_success:
-  - if [ "$TRAVIS_BRANCH" == "master" ]; then
-    docker login -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD";
-    docker tag kennel_kennel-ws:latest wobbals/kennel:latest;
-    docker push wobbals/kennel;
-    fi
+# after_success:
+#   - if [ "$TRAVIS_BRANCH" == "master" ]; then
+#     docker login -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD";
+#     docker tag kennel_kennel-ws:latest wobbals/kennel:latest;
+#     docker push wobbals/kennel;
+#     fi
