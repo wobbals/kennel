@@ -98,17 +98,7 @@ function printCachedInstanceData() {
 }
 
 function refreshTaskECSDescriptions() {
-  var tryTasksAgain = [];
   return taskModel.getActiveTasks()
-  .then(taskIds => {
-    debug('active tasks(redis):');
-    debug(taskIds);
-    let taskGets = [];
-    taskIds.forEach(taskId => {
-      taskGets.push(taskModel.getTask(taskId));
-    });
-    return Promise.all(taskGets);
-  })
   .then(tasks => {
     debug('task details(redis):');
     debug(tasks);
@@ -117,45 +107,62 @@ function refreshTaskECSDescriptions() {
       if (task.arn) {
         taskArns.push(task.arn);
       }
-      if ('waitingForCluster' === task.status) {
-        debug(`task ${task.taskId} needs to run!`);
-        // TODO: This should only fire if an instance has become available.
-        // otherwise, we'll probably end up launching more instances than
-        // needed.
-        tryTasksAgain.push(task.taskId);
-      }
-      if ('queued' === task.status) {
-        debug(`task ${task.taskId} is queued and unprocessed. rerunning.`);
-        // kue job hasn't run yet... why?
-        tryTasksAgain.push(task.taskId);
-      }
     });
-    return taskHelper.describeTasks(taskArns);
+    return taskHelper.describeECSTasks(taskArns);
   })
   .then(ecsTaskDescriptions => {
     let promises = [];
     ecsTaskDescriptions.tasks.forEach(task => {
       promises.push(taskModel.mergeECSTaskDescription(task));
     });
-    tryTasksAgain.forEach(taskId => {
-      promises.push(runTask(taskId));
-    });
     return Promise.all(promises);
   });
 }
 
-function daemonMain() {
-  // Clean this up: Run all async getters. Once all data is available in
-  // one place, then perform scheduling/terminations/etc as needed.
-  refreshInstanceECSDescriptions()
-  .then(printCachedInstanceData())
-  .then(refreshTaskECSDescriptions())
-  .then(cluster.autoResize())
-  .catch(err => {
-    debug(`daemon: mistakes were made.`);
-    debug(err);
+async function runPendingJobs() {
+  let instances = await cluster.getContainerInstances();
+  debug(`runPendingJobs: working with ${instances.length} active instances`);
+  let tasks = await taskModel.getActiveTasks();
+  debug('runPendingJobs: iterating over task list');
+  for (let index in tasks) {
+    let task = tasks[index];
+    debug(task);
+    if ('waitingForCluster' === task.status) {
+      debug(`task ${task.taskId} needs to run!`);
+      let ecsParams = JSON.parse(task.ecsParams);
+      let canRunImmediately = await cluster.canRunTaskImmediately(ecsParams);
+      // don't call runTask if there aren't resources available:
+      // if task status is waitingForCluster, then an instance has already been
+      // requested on behalf of this task.
+      // on the other hand, if for some reason there are no instances, go ahead
+      // and re-request. hopefully this dosn't get into an endless cycle
+      if (canRunImmediately || 0 == instances.length) {
+        await runTask(task.taskId);
+      }
+    }
+    if ('queued' === task.status) {
+      debug(`task ${task.taskId} is queued and unprocessed. rerunning.`);
+      // kue job hasn't run yet... why?
+      await runTask(task.taskId);
+    }
+  };
+}
+
+async function daemonMain() {
+  try {
+    debug(`daemonMain: refresh ECS data`);
+    await refreshInstanceECSDescriptions();
+    await refreshTaskECSDescriptions();
+    debug(`daemonMain: dump cache`);
+    await printCachedInstanceData();
+    debug(`daemonMain: run pending jobs`);
+    await runPendingJobs();
+    debug(`daemonMain: resize cluster`);
+    await cluster.autoResize();
+  } catch (err) {
+    debug(`daemonMain: ${JSON.stringify(err, null, ' ')}`);
     debug(err.stack);
-  });
+  }
 }
 
 setInterval(daemonMain, 60000);

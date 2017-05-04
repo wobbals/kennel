@@ -1,7 +1,7 @@
 const redis = require('./db');
 const debug = require('debug')('kennel:model:task');
 
-module.exports.getTask = function(taskId) {
+var getTask = function(taskId) {
   return new Promise((resolve, reject) => {
     redis.HGETALL(`task:${taskId}`, (err, obj) => {
       if (err) {
@@ -12,6 +12,7 @@ module.exports.getTask = function(taskId) {
     });
   });
 }
+module.exports.getTask = getTask;
 
 module.exports.createTask = function(taskId) {
   debug(`createTask: ${taskId}`);
@@ -100,7 +101,7 @@ var deregisterActiveTask = function(taskId) {
 }
 module.exports.deregisterActiveTask = deregisterActiveTask;
 
-module.exports.getActiveTasks = function() {
+var getActiveTaskIds = function() {
   return new Promise((resolve, reject) => {
     redis.SMEMBERS(`kennelActiveTasks`, (err, obj) => {
       if (err) {
@@ -110,6 +111,19 @@ module.exports.getActiveTasks = function() {
       }
     });
   });
+}
+module.exports.getActiveTaskIds = getActiveTaskIds;
+
+module.exports.getActiveTasks = function() {
+  debug(`getActiveTasks`);
+  return getActiveTaskIds()
+  .then(taskIds => {
+    let taskGets = [];
+    taskIds.forEach(taskId => {
+      taskGets.push(getTask(taskId));
+    });
+    return Promise.all(taskGets);
+  })
 }
 
 var setTaskArn = function(taskId, arn) {
@@ -153,7 +167,7 @@ var getTaskIdForArn = function(arn) {
 module.exports.getTaskIdForArn = getTaskIdForArn;
 
 module.exports.mergeRunningTaskData = function(taskId, obj) {
-  debug(`mergeRunningTaskData: ${taskId}, ${obj}`);
+  debug(`mergeRunningTaskData: ${taskId}, ${JSON.stringify(obj)}`);
   let taskArn = obj.tasks[0].taskArn;
   let containerInstanceArn = obj.tasks[0].containerInstanceArn;
   return setTaskArn(taskId, taskArn)

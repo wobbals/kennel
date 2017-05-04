@@ -136,7 +136,8 @@ var autoResize = function() {
       return (now - idleStart) > warmIdleTimeout * 1000;
     });
     let idleCount = idleInstances.length;
-    debug(`autoResize: ${idleCount} idle instances: ${idleInstances}`)
+    debug(`autoResize: ${idleCount} idle instances:`+
+      ` ${JSON.stringify(idleInstances)}`);
     let promises = [];
     for (let i = 0; i < idleCount - warmInstances; i++) {
       if (!idleInstances.length) {
@@ -242,7 +243,11 @@ var runTask = function(task) {
         debug(`runTask: failed with ${err}`);
         reject(err);
       } else if (data.failures && data.failures.length > 0) {
-        reject(data.failures);
+        let err = {};
+        err.data = data;
+        err.causedBy = 'cluster.runTask';
+        err.stack = new Error().stack;
+        reject(err);
       } else {
         debug(`check my syntax:`);
         debug(data);

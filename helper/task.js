@@ -11,8 +11,8 @@ const ecs = new AWS.ECS({
 });
 const taskModel = require('../model/taskModel');
 
-module.exports.describeTasks = function(taskIds) {
-  debug(`describeTasks ${taskIds}`);
+module.exports.describeECSTasks = function(taskIds) {
+  debug(`describeECSTasks ${taskIds}`);
   if (taskIds.length < 1) {
     return Promise.resolve({tasks: []});
   }
@@ -45,10 +45,12 @@ module.exports.createTask = function(request) {
   if (!request.command) {
     return {error: 'missing request parameter: command'};
   }
-  let command = validator.stripLow(request.command);
+  let command = [];
+  for (let i in request.command) {
+    command.push(validator.stripLow(request.command[i]));
+  }
   debug(`command passed: ${request.command}`);
-  debug(`command parsed: ${command}`);
-  debug(command);
+  debug(`command parsed: ${JSON.stringify(command)}`);
   request.environment.TASK_ID = taskId;
   let environment = [];
   for (let key in request.environment) {
@@ -67,7 +69,7 @@ module.exports.createTask = function(request) {
     overrides: {
       containerOverrides: [
         {
-          command: command.split(' '),
+          command: command,
           environment: environment,
           name: containerName
         }

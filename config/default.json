@@ -1,5 +1,5 @@
 {
-  "warmInstances": 0,
+  "warmInstances": 1,
   "warmIdleTimeout": 60,
   "hardIdleLimit": 3600
 }
