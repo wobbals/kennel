@@ -3,12 +3,7 @@ const debug = require('debug')('kennel:task');
 const config = require('config');
 const queue = require('./jobQueue');
 const uuidV4 = require('uuid/v4');
-const AWS = require('aws-sdk');
-const ecs = new AWS.ECS({
-  accessKeyId: config.get("aws_token"),
-  secretAccessKey: config.get("aws_secret"),
-  region: config.get('ecs_region')
-});
+const ecs = require('./aws').ecs;
 const taskModel = require('../model/taskModel');
 
 module.exports.describeECSTasks = function(taskIds) {

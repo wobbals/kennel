@@ -1,16 +1,8 @@
 var config = require('config');
 var debug = require('debug')('kennel:instance');
 var AWS = require('aws-sdk');
-var ecs = new AWS.ECS({
-  accessKeyId: config.get("aws_token"),
-  secretAccessKey: config.get("aws_secret"),
-  region: config.get('ecs_region')
-});
-var ec2 = new AWS.EC2({
-  accessKeyId: config.get("aws_token"),
-  secretAccessKey: config.get("aws_secret"),
-  region: config.get('ecs_region')
-});
+var ecs = require('./aws').ecs;
+var ec2 = require('./aws').ec2;
 var Instance = require('../model/instanceModel');
 
 var terminateInstance = function(instanceId) {
@@ -44,12 +36,25 @@ var launchClusterInstance = function() {
         Name: 'ecsInstanceRole'
       },
       InstanceInitiatedShutdownBehavior: 'terminate',
-      InstanceType: 'c4.2xlarge', // TODO: Add support for multiple instance types
+      InstanceType: 'c4.xlarge', // TODO: support multiple instance sizes
       // TODO: If we need ssh access to instances,
       // will need to figure out a strategy for KeyName (config, generate, etc)
       // KeyName: 'STRING_VALUE',
       SecurityGroupIds: [
         config.get('ec2_default_security_group')
+        /* more items */
+      ],
+      TagSpecifications: [
+        {
+          ResourceType: 'instance',
+          Tags: [
+            {
+              Key: 'MANAGED_BY',
+              Value: 'KENNEL'
+            },
+            /* more items */
+          ]
+        },
         /* more items */
       ]
     };

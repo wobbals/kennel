@@ -1,11 +1,6 @@
 var config = require('config');
 var debug = require('debug')('kennel:cluster');
-var AWS = require('aws-sdk');
-var ecs = new AWS.ECS({
-  accessKeyId: config.get("aws_token"),
-  secretAccessKey: config.get("aws_secret"),
-  region: config.get('ecs_region')
-});
+var ecs = require('./aws').ecs;
 var instanceHelper = require('./instance');
 var Instance = require('../model/instanceModel');
 var Task = require('../model/taskModel');
