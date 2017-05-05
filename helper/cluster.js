@@ -118,42 +118,61 @@ var getLocalContainerData = function() {
   });
 }
 
-var autoResize = function() {
+var autoAddInstances = async function(idleCount) {
   const warmInstances = config.get('warmInstances');
+  const launchTimeoutThreshold = config.get('instanceLaunchTimeout') * 1000;
+  let numInstancesNeeded = warmInstances - idleCount;
+  debug(`autoAddInstances: not enough idle instances. ` +
+    `need ${numInstancesNeeded} to meet warmInstances quota`
+  );
+  let currentLaunchTimeout = await Instance.getLaunchTimeout();
+  let now = new Date().getTime();
+  // don't launch more instances if we just did recently
+  if (now - currentLaunchTimeout < launchTimeoutThreshold) {
+    debug(`launch timeout too recent to auto add instances. ` +
+      `current: ${now - currentLaunchTimeout} thresh: ${launchTimeoutThreshold}`
+    );
+    return;
+  }
+  for (let i = 0; i < numInstancesNeeded; i++) {
+    instanceHelper.launchClusterInstance();
+  }
+  Instance.setLaunchTimeout();
+}
+
+var autoResize = async function() {
   const warmIdleTimeout = config.get('warmIdleTimeout');
+  const warmInstances = config.get('warmInstances');
   debug(`autoResize: targeting ${warmInstances} warm instances` +
-    ` (timeout=${warmIdleTimeout})`);
-  return getLocalContainerData()
-  .then(containerData => {
-    let now = new Date();
-    let idleInstances = containerData.filter(instance => {
-      if (!instance || !instance.idleSince) {
-        return false;
-      }
-      let idleStart = new Date(parseInt(instance.idleSince));
-      debug(`now=${now} idleStart=${idleStart}`);
-      debug(`instance ${instance.instanceId}: ${now - idleStart} ms idle`);
-      return (now - idleStart) > warmIdleTimeout * 1000;
-    });
-    let idleCount = idleInstances.length;
-    debug(`autoResize: ${idleCount} idle instances:`+
-      ` ${JSON.stringify(idleInstances)}`);
-    let promises = [];
-    for (let i = 0; i < idleCount - warmInstances; i++) {
-      if (!idleInstances.length) {
-        debug(`not enough instances to leave ${warmInstances} warm`);
-        break;
-      }
-      let instance = idleInstances.shift();
-      promises.push(
-        deregisterContainerInstance(instance.arn)
-      );
-      promises.push(
-        instanceHelper.terminateInstance(instance.instanceId)
-      );
+    ` (idleTimeout=${warmIdleTimeout})`
+  );
+  let containerData = await getLocalContainerData();
+  let now = new Date();
+  let idleInstances = containerData.filter(instance => {
+    if (!instance || !instance.idleSince) {
+      return false;
     }
-    return Promise.all(promises);
+    let idleStart = new Date(parseInt(instance.idleSince));
+    debug(`now=${now} idleStart=${idleStart}`);
+    debug(`instance ${instance.instanceId}: ${now - idleStart} ms idle`);
+    return (now - idleStart) > warmIdleTimeout * 1000;
   });
+  let idleCount = idleInstances.length;
+  debug(`autoResize: ${idleCount} idle instances:`+
+    ` ${JSON.stringify(idleInstances)}`
+  );
+  if (idleCount < warmInstances) {
+    await autoAddInstances(idleCount);
+  }
+  for (let i = 0; i < idleCount - warmInstances; i++) {
+    if (!idleInstances.length) {
+      debug(`not enough instances to leave ${warmInstances} warm`);
+      break;
+    }
+    let instance = idleInstances.shift();
+    await deregisterContainerInstance(instance.arn)
+    await instanceHelper.terminateInstance(instance.instanceId)
+  }
 }
 module.exports.autoResize = autoResize;
 
@@ -291,7 +310,7 @@ module.exports.mergeECSInstanceDescriptions = function(ecsDescriptions) {
         }
       )
     );
-
+    promises.push(Instance.clearPendingInstance(instanceId));
     let isPassive = (
       0 == instanceData.runningTasksCount &&
       0 == instanceData.pendingTasksCount

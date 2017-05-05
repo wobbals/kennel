@@ -44,7 +44,7 @@ var launchClusterInstance = function() {
         Name: 'ecsInstanceRole'
       },
       InstanceInitiatedShutdownBehavior: 'terminate',
-      InstanceType: 't2.micro', // TODO: Add support for multiple instance types
+      InstanceType: 'c4.2xlarge', // TODO: Add support for multiple instance types
       // TODO: If we need ssh access to instances,
       // will need to figure out a strategy for KeyName (config, generate, etc)
       // KeyName: 'STRING_VALUE',

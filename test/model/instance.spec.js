@@ -28,11 +28,15 @@ describe('Instance model', () => {
     });
     it('should register an instance', () => {
       return Instance.registerInstance(dummyInstanceId)
-      .should.become('OK');
+      .should.eventually.include('OK');
     });
     it('should find registered instance', () => {
       return Instance.getInstance(dummyInstanceId)
       .should.eventually.have.property('createdAt');
+    });
+    it('should register instance as pending', () => {
+      return Instance.getPendingInstances()
+      .should.eventually.include(dummyInstanceId);
     });
   });
   describe('setIdleSince', () => {

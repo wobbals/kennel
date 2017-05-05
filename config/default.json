@@ -1,5 +1,6 @@
 {
-  "warmInstances": 1,
+  "warmInstances": 0,
   "warmIdleTimeout": 60,
-  "hardIdleLimit": 3600
+  "instanceLaunchTimeout": 300,
+  "daemonInterval": 60000
 }

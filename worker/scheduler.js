@@ -1,3 +1,4 @@
+const config = require('config');
 const debug = require('debug')('worker:scheduler');
 const queue = require('../helper/jobQueue');
 const cluster = require('../helper/cluster');
@@ -121,6 +122,7 @@ function refreshTaskECSDescriptions() {
 
 async function runPendingJobs() {
   let instances = await cluster.getContainerInstances();
+  let pendingInstanceIds = await instanceModel.getPendingInstances();
   debug(`runPendingJobs: working with ${instances.length} active instances`);
   let tasks = await taskModel.getActiveTasks();
   debug('runPendingJobs: iterating over task list');
@@ -134,9 +136,10 @@ async function runPendingJobs() {
       // don't call runTask if there aren't resources available:
       // if task status is waitingForCluster, then an instance has already been
       // requested on behalf of this task.
-      // on the other hand, if for some reason there are no instances, go ahead
-      // and re-request. hopefully this dosn't get into an endless cycle
-      if (canRunImmediately || 0 == instances.length) {
+      if (canRunImmediately ||
+        (0 == instances.length && 0 == pendingInstanceIds.length)
+      )
+      {
         await runTask(task.taskId);
       }
     }
@@ -165,7 +168,7 @@ async function daemonMain() {
   }
 }
 
-setInterval(daemonMain, 60000);
+setInterval(daemonMain, config.get('daemonInterval'));
 daemonMain();
 // setInterval(daemonMain, 600000 /* 10 minutes */);
 // cluster.autoResize();
