@@ -36,7 +36,7 @@ var launchClusterInstance = function() {
         Name: 'ecsInstanceRole'
       },
       InstanceInitiatedShutdownBehavior: 'terminate',
-      InstanceType: 'c4.xlarge', // TODO: support multiple instance sizes
+      InstanceType: 'c4.2xlarge', // TODO: support multiple instance sizes
       // TODO: If we need ssh access to instances,
       // will need to figure out a strategy for KeyName (config, generate, etc)
       // KeyName: 'STRING_VALUE',
