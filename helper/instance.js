@@ -27,6 +27,10 @@ var terminateInstance = function(instanceId) {
 module.exports.terminateInstance = terminateInstance;
 
 var launchClusterInstance = function() {
+  let userDataScript = `#!/bin/bash
+echo "ECS_CLUSTER=${config.get('ecs_cluster_name')}" >> /etc/ecs/ecs.config
+  `;
+  let userData = new Buffer(userDataScript).toString('base64');
   return new Promise((resolve, reject) => {
     var params = {
       ImageId: config.get('cluster_instance_base_image'), /* required */
@@ -56,7 +60,8 @@ var launchClusterInstance = function() {
           ]
         },
         /* more items */
-      ]
+      ],
+      UserData: userData
     };
     ec2.runInstances(params, function(err, data) {
       if (err) {
