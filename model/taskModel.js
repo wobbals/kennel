@@ -31,7 +31,8 @@ var setTaskStatus = function(taskId, someStatus) {
   debug(`setTaskStatus: ${taskId}, ${someStatus}`);
   return new Promise((resolve, reject) => {
     redis.HMSET(`task:${taskId}`, {
-      status: someStatus
+      status: someStatus,
+      statusSince: new Date().getTime()
     }, (err, obj) => {
       if (err) {
         reject(err);
@@ -107,6 +108,7 @@ var getActiveTaskIds = function() {
       if (err) {
         reject(err);
       } else {
+        debug(`getActiveTaskIds: ${obj}`);
         resolve(obj);
       }
     });

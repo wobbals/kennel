@@ -2,6 +2,7 @@
   "warmInstances": 0,
   "warmIdleTimeout": 60,
   "instanceLaunchTimeout": 300,
+  "maxJobWaitTime": 240,
   "daemonInterval": 60000,
   "debug_queue": false
 }

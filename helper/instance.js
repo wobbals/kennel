@@ -24,9 +24,8 @@ var terminateInstance = function(instanceId) {
     });
   });
 }
-module.exports.terminateInstance = terminateInstance;
 
-var launchClusterInstance = function() {
+var launchClusterInstance = function(taskId) {
   let userDataScript = `#!/bin/bash
 echo "ECS_CLUSTER=${config.get('ecs_cluster_name')}" >> /etc/ecs/ecs.config
   `;
@@ -48,21 +47,24 @@ echo "ECS_CLUSTER=${config.get('ecs_cluster_name')}" >> /etc/ecs/ecs.config
         config.get('ec2_default_security_group')
         /* more items */
       ],
-      TagSpecifications: [
-        {
-          ResourceType: 'instance',
-          Tags: [
-            {
-              Key: 'MANAGED_BY',
-              Value: 'KENNEL'
-            },
-            /* more items */
-          ]
-        },
-        /* more items */
-      ],
       UserData: userData
     };
+    let tags = [];
+    if (taskId) {
+      debug(`earmarking instance request for ${taskId}`);
+      tags.push({
+        Key: 'EARMARK',
+        Value: taskId
+      });
+    }
+    tags.push({
+      Key: 'MANAGED_BY',
+      Value: 'KENNEL'
+    });
+    params.TagSpecifications = [{
+      ResourceType: 'instance',
+      Tags: tags
+    }];
     ec2.runInstances(params, function(err, data) {
       if (err) {
         debug(`error launching new cluster instance: ${err}`);
@@ -77,4 +79,53 @@ echo "ECS_CLUSTER=${config.get('ecs_cluster_name')}" >> /etc/ecs/ecs.config
     });
   });
 };
-module.exports.launchClusterInstance = launchClusterInstance;
+
+function describeInstance(instanceId) {
+  return new Promise((resolve, reject) => {
+    var params = {
+      InstanceIds: [
+        instanceId
+        /* more items */
+      ]
+    };
+    ec2.describeInstances(params, function(err, data) {
+      if (err) {
+        debug(`describeInstance: ${err}`);
+        reject(err);
+      } else {
+        debug(`describeInstance: ${data}`);
+        resolve(data);
+      }
+    });
+  });
+}
+
+function getInstanceTags(instanceId) {
+  return new Promise((resolve, reject) => {
+    var params = {
+      Filters: [
+        {
+          Name: "resource-id",
+          Values: [
+            instanceId
+          ]
+        }
+      ]
+    };
+    ec2.describeTags(params, function(err, data) {
+      if (err) {
+        debug(`getInstanceTags: error: ${err}`);
+        reject(err);
+      } else {
+        resolve(data.Tags);
+      }
+    });
+  });
+}
+
+module.exports = {
+  launchClusterInstance,
+  terminateInstance,
+  describeInstance,
+  getInstanceTags
+}

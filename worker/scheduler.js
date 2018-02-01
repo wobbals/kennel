@@ -4,6 +4,7 @@ const queue = require('../helper/jobQueue');
 const cluster = require('../helper/cluster');
 const taskModel = require('../model/taskModel');
 const instanceModel = require('../model/instanceModel');
+const instanceHelper = require('../helper/instance');
 const taskHelper = require('../helper/task');
 
 queue.process('runTask', function(job, done){
@@ -40,12 +41,13 @@ process.on('unhandledRejection', (reason, p) => {
 debug(`connected to queue redis at ${queue.client.address}`);
 debug(`worker standing by`);
 
-function handleNoResources(taskId) {
-  return cluster.launchInstance()
-  .then(taskModel.setTaskStatus(taskId, 'waitingForCluster'));
+async function handleNoResources(taskId) {
+  await instanceHelper.launchClusterInstance(taskId);
+  await taskModel.setTaskStatus(taskId, 'waitingForCluster');
 }
 
 function runTaskImmediately(taskId, ecsParams) {
+  debug(`runTaskImmediately: taskId=${taskId}, ecsParams=${ecsParams}`);
   return cluster.runTask(ecsParams)
   .then(result => {
     let p1 = taskModel.mergeRunningTaskData(taskId, result);
@@ -61,7 +63,7 @@ function runTask(taskId) {
   .then(task => {
     taskData = task;
     ecsParams = JSON.parse(task.ecsParams);
-    return cluster.canRunTaskImmediately(ecsParams)
+    return cluster.canRunTaskImmediately(ecsParams, taskId)
   })
   .then((hasResources) => {
     if (!hasResources) {
@@ -130,13 +132,19 @@ async function runPendingJobs() {
     let task = tasks[index];
     debug(task);
     if ('waitingForCluster' === task.status) {
-      debug(`task ${task.taskId} needs to run!`);
+      debug(`runPendingJobs: task ${task.taskId} needs to run!`);
       let ecsParams = JSON.parse(task.ecsParams);
-      let canRunImmediately = await cluster.canRunTaskImmediately(ecsParams);
+      let canRunImmediately =
+      await cluster.canRunTaskImmediately(ecsParams, task.taskId);
       // don't call runTask if there aren't resources available:
       // if task status is waitingForCluster, then an instance has already been
       // requested on behalf of this task.
-      if (canRunImmediately ||
+      let waitingSince = 0;
+      if (task.statusSince) {
+        waitingSince = (new Date() - task.statusSince) / 1000;
+      }
+      debug(`runPendingJobs: ${task.taskId} waitingSince=${waitingSince}`);
+      if (canRunImmediately || waitingSince > config.get('maxJobWaitTime') ||
         (0 == instances.length && 0 == pendingInstanceIds.length)
       )
       {

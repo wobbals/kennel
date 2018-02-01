@@ -15,7 +15,7 @@ var getContainerInstances = function() {
         debug(`listContainerInstances error`);
         reject(err);
       } else {
-        debug(`getContainerInstances found ` +
+        debug(`getContainerInstances: found` +
           ` ${data.containerInstanceArns.length} instances`);
         resolve(data.containerInstanceArns);
       }
@@ -203,33 +203,54 @@ var taskRequiredMemory = function(taskDescription) {
   return memoryRequired;
 }
 
-var canRunTaskImmediately = function(task) {
-  let taskDescription = getTaskDescription(task.taskDefinition);
-  let instanceDescriptions =
-  getContainerInstances().then(describeContainerInstances);
-  return Promise.all([taskDescription, instanceDescriptions]).then((values) => {
-    // js nerds: is there a better way to map the promise results back from
-    // the original call to Promise.all? Can I rely on the ordering to be
-    // preserved here?
-    let description = values[0];
-    let instances = values[1];
+// TODO: This function probably has about 3x the network calls necessary to
+// complete the task. A little caching could go a long way...
+const canRunTaskImmediately = async function(ecsTask, taskId) {
+  try {
+    debug(`canRunTaskImmediately: taskId=${taskId}`);
+    let taskDescription = await getTaskDescription(ecsTask.taskDefinition);
+    let instances = await getContainerInstances();
+    let instanceDescriptions = await describeContainerInstances(instances);
     let availableInstances = 0;
-    let requiredMemory = taskRequiredMemory(description);
-    let requiredCPU = taskRequiredCPU(description);
-    debug(`task: mem=${requiredMemory} cpu=${requiredCPU}`);
-    instances.containerInstances.forEach((instance) => {
+    let requiredMemory = taskRequiredMemory(taskDescription);
+    let requiredCPU = taskRequiredCPU(taskDescription);
+    debug(`canRunTaskImmediately: task ${taskId} requires: `+
+      `mem=${requiredMemory} cpu=${requiredCPU}`);
+    let taskIds = await Task.getActiveTaskIds();
+    for (let instance of instanceDescriptions.containerInstances) {
       let availableMemory = instanceAvailableMemory(instance);
       let availableCPU = instanceAvailableCPU(instance);
-      debug(`instance ${instance.ec2InstanceId}: ` +
-        `available mem=${availableMemory} cpu=${availableCPU}`
-      );
-      if (availableCPU >= requiredCPU && availableMemory >= requiredMemory) {
-        availableInstances++
+      let instanceTags =
+      await instanceHelper.getInstanceTags(instance.ec2InstanceId);
+      let instanceEarmark = null;
+      for (let tag of instanceTags) {
+        if ('EARMARK' === tag.Key) {
+          instanceEarmark = tag.Value;
+          debug(`canRunTaskImmediately: ${instance.ec2InstanceId} is `+
+            `earmarked for ${instanceEarmark}`);
+          break;
+        }
       }
-    });
-    debug(`canRunTaskImmediately: resolving with ${availableInstances > 0}`);
+      let earmarkPermitted =
+       (instanceEarmark === taskId || !taskIds.includes(instanceEarmark));
+
+      if (availableCPU >= requiredCPU &&
+        availableMemory >= requiredMemory &&
+        earmarkPermitted)
+      {
+        debug(`canRunTaskImmediately: taskId=${taskId}:`+
+          `${instance.ec2InstanceId} is available`);
+        availableInstances++;
+        break;
+      }
+    }
+    debug(`canRunTaskImmediately:  taskId=${taskId}:`+
+      ` ret=${availableInstances > 0}`);
     return availableInstances > 0;
-  });
+  } catch (e) {
+    debug(`canRunTaskImmediately: taskId=${taskId}: ${e.message}`);
+    return false;
+  }
 };
 module.exports.canRunTaskImmediately = canRunTaskImmediately;
 
@@ -251,6 +272,7 @@ var listTasksRunning = function() {
 }
 
 var runTask = function(task) {
+  debug(`runTask: task=${JSON.stringify(task)}`);
   return new Promise((resolve, reject) => {
     ecs.runTask(task, function(err, data) {
       if (err) {
@@ -263,8 +285,6 @@ var runTask = function(task) {
         err.stack = new Error().stack;
         reject(err);
       } else {
-        debug(`check my syntax:`);
-        debug(data);
         let taskArn = data.tasks[0].taskArn;
         debug(`runTask: launched ${taskArn}`);
         resolve(data);
@@ -286,8 +306,7 @@ module.exports.markRunningInstance = function(runTaskResponse) {
 }
 
 module.exports.mergeECSInstanceDescriptions = function(ecsDescriptions) {
-  debug('mergeECSInstanceDescriptions');
-  debug(ecsDescriptions);
+  debug(`mergeECSInstanceDescriptions: ${JSON.stringify(ecsDescriptions)}`);
   let promises = [];
   ecsDescriptions.containerInstances.forEach(instanceData => {
     let instanceId = instanceData.ec2InstanceId;
@@ -313,7 +332,7 @@ module.exports.mergeECSInstanceDescriptions = function(ecsDescriptions) {
     let p;
     if (isPassive) {
       p = Instance.getIdleSince(instanceId).then(since => {
-        debug(`${instanceId} idle since ${since}`);
+        debug(`${instanceId} idle since=${since}`);
         if (!since) {
           return Instance.setIdleSince(instanceId, new Date());
         }
@@ -325,6 +344,3 @@ module.exports.mergeECSInstanceDescriptions = function(ecsDescriptions) {
   });
   return Promise.all(promises);
 }
-
-module.exports.launchInstance = instanceHelper.launchClusterInstance;
-
