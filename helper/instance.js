@@ -28,8 +28,9 @@ var terminateInstance = function(instanceId) {
 let launchSpotInstance = function(taskId) {
   return new Promise((resolve, reject) => {
     let userDataScript = `#!/bin/bash
-  echo "ECS_CLUSTER=${config.get('ecs_cluster_name')}" >> /etc/ecs/ecs.config
-    `;
+echo "ECS_CLUSTER=${config.get('ecs_cluster_name')}" >> /etc/ecs/ecs.config
+docker pull wobbals/horseman:latest
+`;
     let userData = new Buffer(userDataScript).toString('base64');
     var params = {
       SpotFleetRequestConfig: {

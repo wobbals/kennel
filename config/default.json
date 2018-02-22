@@ -1,5 +1,5 @@
 {
-  "warmInstances": 0,
+  "warmInstances": 1,
   "warmIdleTimeout": 60,
   "instanceLaunchTimeout": 300,
   "maxJobWaitTime": 240,
