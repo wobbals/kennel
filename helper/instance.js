@@ -25,6 +25,62 @@ var terminateInstance = function(instanceId) {
   });
 }
 
+let launchSpotInstance = function(taskId) {
+  return new Promise((resolve, reject) => {
+    let userDataScript = `#!/bin/bash
+  echo "ECS_CLUSTER=${config.get('ecs_cluster_name')}" >> /etc/ecs/ecs.config
+    `;
+    let userData = new Buffer(userDataScript).toString('base64');
+    var params = {
+      SpotFleetRequestConfig: {
+        IamFleetRole: config.get('ec2_fleet_role'),
+        TargetCapacity: 1,
+        LaunchSpecifications: [{
+          IamInstanceProfile: {
+            Name: 'ecsInstanceRole'
+          },
+          ImageId: config.get('cluster_instance_base_image'),
+          InstanceType: 'c4.2xlarge',
+          SecurityGroups: [{
+            GroupId: config.get('ec2_default_security_group')
+          }],
+          UserData: userData
+        }],
+        Type: 'request'
+      }
+    };
+    if (taskId) {
+      params.SpotFleetRequestConfig.ClientToken = taskId;
+    }
+
+    let tags = [];
+    if (taskId) {
+      debug(`earmarking instance request for ${taskId}`);
+      tags.push({
+        Key: 'EARMARK',
+        Value: taskId
+      });
+    }
+    tags.push({
+      Key: 'MANAGED_BY',
+      Value: 'KENNEL'
+    });
+    params.SpotFleetRequestConfig.LaunchSpecifications[0].TagSpecifications = [{
+      ResourceType: 'instance',
+      Tags: tags
+    }];
+    ec2.requestSpotFleet(params, function(err, data) {
+      if (err) {
+        debug(`launchSpotInstance: ${err.message}`);
+        reject(err);
+      } else {
+        debug(`launchSpotInstance: ${JSON.stringify(data)}`);
+        resolve(data);
+      }
+    });
+  });
+}
+
 var launchClusterInstance = function(taskId) {
   let userDataScript = `#!/bin/bash
 echo "ECS_CLUSTER=${config.get('ecs_cluster_name')}" >> /etc/ecs/ecs.config
@@ -51,6 +107,9 @@ echo "ECS_CLUSTER=${config.get('ecs_cluster_name')}" >> /etc/ecs/ecs.config
     };
     let tags = [];
     if (taskId) {
+      // prevent multiple instances from starting on the same taskId
+      params.ClientToken = taskId;
+
       debug(`earmarking instance request for ${taskId}`);
       tags.push({
         Key: 'EARMARK',
@@ -124,6 +183,7 @@ function getInstanceTags(instanceId) {
 }
 
 module.exports = {
+  launchSpotInstance,
   launchClusterInstance,
   terminateInstance,
   describeInstance,

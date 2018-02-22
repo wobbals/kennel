@@ -130,7 +130,7 @@ var autoAddInstances = async function(idleCount) {
     return;
   }
   for (let i = 0; i < numInstancesNeeded; i++) {
-    instanceHelper.launchClusterInstance();
+    instanceHelper.launchSpotInstance();
   }
   Instance.setLaunchTimeout();
 }

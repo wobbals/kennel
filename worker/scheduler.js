@@ -42,7 +42,7 @@ debug(`connected to queue redis at ${queue.client.address}`);
 debug(`worker standing by`);
 
 async function handleNoResources(taskId) {
-  await instanceHelper.launchClusterInstance(taskId);
+  await instanceHelper.launchSpotInstance(taskId);
   await taskModel.setTaskStatus(taskId, 'waitingForCluster');
 }
 
@@ -57,6 +57,7 @@ function runTaskImmediately(taskId, ecsParams) {
 }
 
 function runTask(taskId) {
+  debug(`runTask: taskId=${taskId}`);
   var taskData = {};
   var ecsParams = {};
   return taskModel.getTask(taskId)
@@ -130,30 +131,8 @@ async function runPendingJobs() {
   debug('runPendingJobs: iterating over task list');
   for (let index in tasks) {
     let task = tasks[index];
-    debug(task);
-    if ('waitingForCluster' === task.status) {
-      debug(`runPendingJobs: task ${task.taskId} needs to run!`);
-      let ecsParams = JSON.parse(task.ecsParams);
-      let canRunImmediately =
-      await cluster.canRunTaskImmediately(ecsParams, task.taskId);
-      // don't call runTask if there aren't resources available:
-      // if task status is waitingForCluster, then an instance has already been
-      // requested on behalf of this task.
-      let waitingSince = 0;
-      if (task.statusSince) {
-        waitingSince = (new Date() - task.statusSince) / 1000;
-      }
-      debug(`runPendingJobs: ${task.taskId} waitingSince=${waitingSince}`);
-      if (canRunImmediately || waitingSince > config.get('maxJobWaitTime') ||
-        (0 == instances.length && 0 == pendingInstanceIds.length)
-      )
-      {
-        await runTask(task.taskId);
-      }
-    }
-    if ('queued' === task.status) {
-      debug(`task ${task.taskId} is queued and unprocessed. rerunning.`);
-      // kue job hasn't run yet... why?
+    debug(JSON.stringify(task));
+    if ('queued' === task.status || 'waitingForCluster' === task.status) {
       await runTask(task.taskId);
     }
   };

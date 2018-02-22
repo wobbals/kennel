@@ -6,5 +6,6 @@
   "ec2_default_security_group": "EC2_DEFAULT_SECURITY_GROUP",
   "cluster_instance_base_image": "CLUSTER_INSTANCE_BASE_IMAGE",
   "redis_host": "REDIS_HOST",
-  "redis_port": "REDIS_PORT"
+  "redis_port": "REDIS_PORT",
+  "ec2_fleet_role":"EC2_FLEET_ROLE"
 }
