@@ -8,7 +8,7 @@ const instanceHelper = require('../helper/instance');
 const taskHelper = require('../helper/task');
 
 queue.process('runTask', function(job, done){
-  runTask(job.data).then(() => {
+  runTask(job.data, true).then(() => {
     done();
   })
   .catch(err => {
@@ -56,17 +56,24 @@ function runTaskImmediately(taskId, ecsParams) {
   });
 }
 
-function runTask(taskId) {
-  debug(`runTask: taskId=${taskId}`);
-  var taskData = {};
-  var ecsParams = {};
-  return taskModel.getTask(taskId)
-  .then(task => {
+async function runTask(taskId, force) {
+  try {
+    debug(`runTask: taskId=${taskId} force=${force}`);
+    let taskData = {};
+    let ecsParams = {};
+    let task = await taskModel.getTask(taskId);
     taskData = task;
     ecsParams = JSON.parse(task.ecsParams);
-    return cluster.canRunTaskImmediately(ecsParams, taskId)
-  })
-  .then((hasResources) => {
+    if (force && 'deferred' === taskData.status) {
+      debug(`runTask: taskId=${taskId}: forcing deferred task to queue`);
+      taskData.status = 'queued';
+      await taskModel.setTaskData(taskId, taskData);
+    } else if (!force && 'deferred' === taskData.status) {
+      debug(`runTask: taskId=${taskId} is deferred and not ready to run.`);
+      return Promise.resolve();
+    }
+    let hasResources = await cluster.canRunTaskImmediately(ecsParams, taskId);
+
     if (!hasResources) {
       debug(`no instances available. launch instance and try again later`);
       return handleNoResources(taskId);
@@ -74,7 +81,9 @@ function runTask(taskId) {
       debug(`task ${taskId} can be scheduled immediately`);
       return runTaskImmediately(taskId, ecsParams);
     }
-  });
+  } catch (err) {
+    debug(`runTask: error!`, err);
+  }
 };
 
 function refreshInstanceECSDescriptions() {
@@ -133,7 +142,7 @@ async function runPendingJobs() {
     let task = tasks[index];
     debug(JSON.stringify(task));
     if ('queued' === task.status || 'waitingForCluster' === task.status) {
-      await runTask(task.taskId);
+      await runTask(task.taskId, false);
     }
   };
 }

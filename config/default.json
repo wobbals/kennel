@@ -1,6 +1,6 @@
 {
   "warmInstances": 1,
-  "warmIdleTimeout": 60,
+  "warmIdleTimeout": 600,
   "instanceLaunchTimeout": 300,
   "maxJobWaitTime": 240,
   "daemonInterval": 60000,

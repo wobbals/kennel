@@ -26,7 +26,7 @@ module.exports.describeECSTasks = function(taskIds) {
   });
 }
 
-module.exports.createTask = function(request) {
+module.exports.createTask = async function(request) {
   let taskId = uuidV4();
   let result = {};
   if (!request.task) {
@@ -83,13 +83,32 @@ module.exports.createTask = function(request) {
     status: 'accepted'
   };
 
-  let p1 = taskModel.createTask(taskId)
-  .then(taskModel.registerActiveTask(taskId))
-  .then(taskModel.setTaskData(taskId, jobData));
+  let jobDelay = 0;
+  let launchTime = null;
+  debug(`request.requestedLaunchTime: ${request.requestedLaunchTime}`);
+  if (validator.isISO8601(`${request.requestedLaunchTime}`))
+  {
+    launchTime = new Date(`${request.requestedLaunchTime}`);
+    let launchDelay = launchTime - new Date();
+    // queue the runTask in advance of the requested job start, in case
+    // more instances need launching in order to land the job on the cluster
+    launchDelay -= 180000;
+    jobDelay = Math.max(0, launchDelay);
+  }
+  debug(`createTask: taskId=${taskId}; jobDelay=${jobDelay}`);
+  if (jobDelay > 0) {
+    jobData.requestedLaunchTime = launchTime.toISOString();
+    jobData.status = 'deferred';
+  }
 
-  let p2 = new Promise((resolve, reject) => {
+  await taskModel.createTask(taskId);
+  await taskModel.registerActiveTask(taskId);
+  await taskModel.setTaskData(taskId, jobData);
+
+  return new Promise((resolve, reject) => {
     let job = queue.create('runTask', taskId)
     .removeOnComplete(true)
+    .delay(jobDelay)
     .save((err) => {
       if (err) {
         debug(`error queueing runTask: ${err}`);
@@ -103,6 +122,4 @@ module.exports.createTask = function(request) {
       }
     });
   });
-
-  return Promise.resolve(responseData).then(p1).then(p2);
 };
